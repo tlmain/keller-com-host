@@ -15,5 +15,9 @@
   "bugs": {
     "url": "https://github.com/tlmain/keller-com-host/issues"
   },
-  "homepage": "https://github.com/tlmain/keller-com-host#readme"
+  "homepage": "https://github.com/tlmain/keller-com-host#readme",
+  "dependencies": {
+    "express": "^4.17.1",
+    "serialport": "^8.0.5"
+  }
 }
