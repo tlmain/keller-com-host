@@ -1,0 +1,19 @@
+{
+  "name": "keller-com-host",
+  "version": "1.0.0",
+  "description": "",
+  "main": "core.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tlmain/keller-com-host.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/tlmain/keller-com-host/issues"
+  },
+  "homepage": "https://github.com/tlmain/keller-com-host#readme"
+}
