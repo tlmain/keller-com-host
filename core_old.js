@@ -14,49 +14,41 @@ app.listen(8080, () => {
   debug("API READY");
 });
 
-var PORTS = {};
+var OPEN_PORTS = {};
 
-//setInterval(updatePorts, 1000);
-
-updatePorts();
-
-async function updatePorts() {
-  var allPorts = await serialport.list()
-  allPorts.forEach((pInfo) => {
-    var name = pInfo.path.replace("/dev/","");
-    //Port init'd?
-    var port = PORTS[name];
-    if (port) {
-      //Already init'd
-    } else {
-      //Requires init
-      PORTS[name] = new serialport("/dev/" + name, { autoOpen: false });
-      PORTS[name].receiveBuffer = [];
-      PORTS[name] .on('open', onPortOpen);
-      PORTS[name] .on('close', onPortClose);
-      PORTS[name] .on('data', onPortReceive);
-    }
+function getAllPorts() {
+  return new Promise(async (resolve, reject) => {
+    var allPorts = await serialport.list();
+    return resolve(allPorts.map((port) => { return getPortState(port.path.replace("/dev/","")); }));
   });
 }
 
-function getPortSummary(_port) {
+function getPortState(_name) {
+  var openPort = OPEN_PORTS[_name];
   return {
-    port: _port.path.replace("/dev/",""),
-    open: _port ? _port.isOpen : false,
-    baud: _port ? (_port.baud || 0) : 0,
-    bytesReceived: _port ? _port.receiveBuffer.length : 0
+    port: _name,
+    open: !!openPort,
+    baud: openPort ? openPort.baud : 0,
+    bytesReceived: openPort ? openPort.receiveBuffer.length : 0
   };
 }
 
-async function openPort(_name, _baud) {
+function openPort(_name, _baud) {
   try {
-    var port = PORTS[_name];
-    //Already open?
-    if (port.isOpen) {
-      //Close first
-      await closePort(_name);
+    //Check for existing
+    var existing = OPEN_PORTS[_name];
+    if (existing) {
+      //Close first, then reopen
+      existing.close();
     }
-    port.open();
+    //Open port
+    var port = new serialport("/dev/" + _name, {
+      baudRate: _baud
+    });
+    //Init event listeners
+    port.on('open', onPortOpen);
+    port.on('close', onPortClose);
+    port.on('data', onPortReceive);
     return true;
   } catch(e) {
     error("Failed to open port " + _name + " @ " + _baud + " e: " + e);
@@ -64,28 +56,17 @@ async function openPort(_name, _baud) {
   }
 }
 
-function closePort(_name) {
-  return new Promise((resolve, reject) => {
-    var port = PORTS[_name];
-    port.close();
-    setInterval(() => {
-      //Wait for close
-      if (!port.isOpen) { return resolve(); }
-    }, 100);
-  });
-}
-
-
 function onPortOpen(){
   //Port has been opened on the I/O level
-  this.receiveBuffer = []
-  info("Port " + this.path + " opened @ " + this.baudRate + " baud, buffers cleared");
+  OPEN_PORTS[this.path.replace("/dev/","")] = this;
+  this.receiveBuffer = [];
+  info("Port " + this.path + " opened @ " + this.baudRate + " baud");
 }
 
 function onPortClose(){
-  //Port has been closed on the I/O level
-  this.receiveBuffer = []
-  info("Port " + this.path + " closed, buffers cleared");
+  //Port has been closed on the I/O level, remove from OPEN_PORTS
+  delete OPEN_PORTS[this.path.replace("/dev/","")];
+  info("Port " + this.path + " closed");
 }
 
 function onPortReceive(_data) {
@@ -98,26 +79,33 @@ function onPortReceive(_data) {
 // API METHODS /////////////////////////////////////////////////////////////////
 
 app.get("/ports", async (_req, _res) => {
-  // Get all ports
+  // Get ports
   var ports = await serialport.list();
-   _res.send(Object.values(PORTS).map((port) => { return getPortSummary(port); }));
+   _res.send((await getAllPorts()))
 });
 
 app.post("/ports/:port", async (_req, _res) => {
   // Open Port or write data
   if (_req.body && Object.keys(_req.body).length > 0) {
     //Write data to port
-    var port = PORTS[_req.params.port];
-    if (port && port.isOpen) {
+    var port = OPEN_PORTS[_req.params.port];
+    if (port && port.open) {
       port.write(_req.body.string);
+      _res.status(200).send(JSON.stringify({ success: true }));
+    } else {
+      _res.status(500).send(JSON.stringify({
+        success: false,
+        error: "Port not open"
+      }));
+    }
+  } else {
+    //Open port
+    var port = openPort(_req.params.port, parseInt(_req.query.baud) || 9600);
+    if (port) {
       _res.status(200).send();
     } else {
       _res.status(500).send();
     }
-  } else {
-    //Open port
-    openPort(_req.params.port, parseInt(_req.query.baud) || 9600);
-   _res.status(200).send();
   }
 });
 
