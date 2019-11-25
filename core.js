@@ -40,10 +40,9 @@ async function updatePorts() {
 }
 
 
-
 function getPortSummary(_port) {
   return {
-    port: _port.path.replace("/dev/",""),
+    name: _port.path.replace("/dev/",""),
     open: _port ? _port.isOpen : false,
     baud: _port ? (_port.baudRate || 0) : 0,
     bytesReceived: _port ? _port.receiveBuffer.length : 0
@@ -107,7 +106,11 @@ function onPortReceive(_data) {
 app.get("/ports", async (_req, _res) => {
   // Get all ports
   var ports = await serialport.list();
-   _res.send(Object.values(PORTS).map((port) => { return getPortSummary(port); }));
+  var summaries = {};
+  Object.values(PORTS).forEach((port) => {
+    summaries[port.path.replace("/dev/","")] = getPortSummary(port);
+  });
+   _res.send(summaries);
 });
 
 app.post("/ports/:port", async (_req, _res) => {
