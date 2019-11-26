@@ -137,7 +137,7 @@ app.get("/ports/:port", (_req, _res) => {
   // Get port state
   var port = PORTS[_req.params.port];
   if (port) {
-    _res.status(200).send(getPortState(port));
+    _res.status(200).send(getPortSummary(port));
   } else {
     _res.status(500).send({});
   }
