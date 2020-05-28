@@ -18,6 +18,8 @@
   "homepage": "https://github.com/tlmain/keller-com-host#readme",
   "dependencies": {
     "express": "^4.17.1",
-    "serialport": "^8.0.5"
+    "express-session": "^1.17.1",
+    "serialport": "^8.0.8",
+    "sleep": "^6.2.0"
   }
 }

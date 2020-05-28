@@ -5,165 +5,132 @@ const express = require('express');
 const app = express();
 const bodyParser = require("body-parser");
 
-app.use("/", express.static('./public'));
 app.use(bodyParser.json({limit: '50mb'}));
 app.use(bodyParser.urlencoded({ extended: true }));
 
 app.listen(8080, () => {
   //screen_ready();
-  debug("API READY");
+  debug("API READY on 8080");
 });
 
-var PORTS = {};
+DEFAULT_BAUD = 115200;
 
-//setInterval(updatePorts, 1000);
+CONFIG_PROPERTIES = ["baudRate","dataBits", "parity","xany", "xon", "xoff", "rtscts"];
 
-updatePorts();
-
-async function updatePorts() {
-  var allPorts = await serialport.list()
-  allPorts.forEach((pInfo) => {
-    var name = pInfo.path.replace("/dev/","");
-    //Port init'd?
-    var port = PORTS[name];
-    if (port) {
-      //Already init'd
-    } else {
-      //Requires init
-      PORTS[name] = new serialport("/dev/" + name, { autoOpen: false });
-      PORTS[name].receiveBuffer = [];
-      PORTS[name].on('open', onPortOpen);
-      PORTS[name].on('close', onPortClose);
-      PORTS[name].on('data', onPortReceive);
-    }
-  });
-}
-
-
-function getPortSummary(_port) {
-  return {
-    name: _port.path.replace("/dev/",""),
-    open: _port ? _port.isOpen : false,
-    baud: _port ? (_port.baudRate || 0) : 0,
-    bytesReceived: _port ? _port.receiveBuffer.length : 0
-  };
-}
-
-function openPort(_name, _baud) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      var port = PORTS[_name];
-      //Already open?
-      if (port.isOpen) {
-        //Close first
-        await closePort(_name);
-      }
-      //Update settings
-      port.open(() => {
-        port.update({ baudRate: _baud }, () => {});
-      });
-      return resolve(true);
-    } catch(e) {
-      error("Failed to open port " + _name + " e: " + e);
-      return resolve(false);
-    }
-  });
-}
-
-function closePort(_name) {
-  return new Promise((resolve, reject) => {
-    var port = PORTS[_name];
-    port.close();
-    setInterval(() => {
-      //Wait for close
-      if (!port.isOpen) { return resolve(); }
-    }, 100);
-  });
-}
-
-
-function onPortOpen(){
-  //Port has been opened on the I/O level
-  this.receiveBuffer = []
-  info("Port " + this.path + " opened, buffers cleared");
-}
-
-function onPortClose(){
-  //Port has been closed on the I/O level
-  this.receiveBuffer = []
-  info("Port " + this.path + " closed, buffers cleared");
-}
-
-function onPortReceive(_data) {
-  //Port has received data on the I/O level
-  info("Port " + this.path + " received " + _data.length + " bytes");
-  this.receiveBuffer.push.apply(this.receiveBuffer, _data);
-}
+PORTS = {};
 
 
 // API METHODS /////////////////////////////////////////////////////////////////
 
 app.get("/ports", async (_req, _res) => {
   // Get all ports
-  var ports = await serialport.list();
-  var summaries = {};
+  var info = {};
   Object.values(PORTS).forEach((port) => {
-    summaries[port.path.replace("/dev/","")] = getPortSummary(port);
+    info[port.path] = getPortSummary(port);
   });
-   _res.send(summaries);
+   _res.send(info);
+});
+
+app.get("/ports/:port", async (_req, _res) => {
+  var port = PORTS[_req.params.port];
+  if (port) { _res.send(getPortSummary(port)); } else { _res.status(500).send(); }
 });
 
 app.post("/ports/:port", async (_req, _res) => {
-  // Open Port or write data
-  if (_req.body && Object.keys(_req.body).length > 0) {
-    //Write data to port
-    var port = PORTS[_req.params.port];
-    if (port && port.isOpen) {
-      port.write(_req.body.string, (e) => {
-        _res.status(e ? 500 : 200).send();
+  var port = PORTS[_req.params.port];
+  if (!port) {
+    return _res.status(500).send();
+  }
+  var updated = {};
+  CONFIG_PROPERTIES.filter((prop) => { return _req.body[prop] != null; }).forEach((prop) => {
+    updated[prop] = _req.body[prop];
+  });
+  //Clear received if requested
+  if (Array.isArray(_req.body.received) && _req.body.received.length == 0) {
+    port.received = [];
+  }
+  //Update settings
+  port.update(updated, () => {
+    //Check for transmit data
+    if (_req.body.transmit) {
+      //Transmit the supplied data
+      port.write(_req.body.transmit, (e) => {
+        if (e) {
+          //Error
+          _res.status(500).send(e);
+        } else {
+          //Success, check for wait condition
+          if (_req.body.waitForTime) {
+            //Wait a static timeframe (ms) then respond
+            setTimeout(() => { _res.send(getPortSummary(port)); }, _req.body.waitForTime);
+          } else if (_req.body.waitForCount) {
+            //Wait for receive buffer to reach a certain size (or timeout) then respond
+            var timeout = 1000;
+            var interval = setInterval(() => {
+              if (port.received.length >= _req.body.waitForCount || timeout == 0) {
+                clearInterval(interval);
+                return _res.send(getPortSummary(port));
+              }
+              timeout--;
+            }, 1);
+          } else if (_req.body.waitForString) {
+            //Waits until the supplied character has been received
+            var timeout = 1000;
+            var interval = setInterval(() => {
+              if (bytesToString(port.received).includes(_req.body.waitForString) || timeout == 0) {
+                clearInterval(interval);
+                return _res.send(getPortSummary(port));
+              }
+              timeout--;
+            }, 1);
+          } else {
+            //No
+            _res.send(getPortSummary(port));
+          }
+        }
       });
     } else {
-      error("Attempted to write to closed port " + _req.params.port)
-      _res.status(500).send();
+      //No transmission, just return
+      _res.send(getPortSummary(port));
     }
-  } else {
-    //Open port
-    var opened = await openPort(_req.params.port, parseInt(_req.query.baud) || 9600);
-   _res.status(opened ? 200 : 500).send();
-  }
+  });
 });
 
-app.get("/ports/:port", (_req, _res) => {
-  // Get port state
-  var port = PORTS[_req.params.port];
-  if (port) {
-    _res.status(200).send(getPortSummary(port));
-  } else {
-    _res.status(500).send({});
-  }
-});
+setInterval(() => {  refreshPorts(); }, 500);
 
-app.get("/ports/:port/receive", (_req, _res) => {
-  // Get data stored in receive buffer, Params: clears
-  var port = PORTS[_req.params.port];
-  if (port) {
-    _res.status(200).send({
-      data: port.receiveBuffer,
-      length: port.receiveBuffer.length
-    });
-    if (_req.query.clear) { port.receiveBuffer = []; }
-  } else {
-    _res.status(500).send("{}");
-  }
-});
+async function refreshPorts() {
+  //Check for ports not in PORTS
+  (await serialport.list()).filter((port) => { return !PORTS[port.path]; }).forEach((portInfo) => {
+    var port = new serialport(portInfo.path, { autoOpen: true });
+    //Init events and buffers
+    port.received = [];
+    port.on('close', onPortClose);
+    port.on('data', onPortReceive);
+    PORTS[port.path] = port;
+    info("Found and opened new port " + port.path);
+  });
+}
 
-app.delete("/ports/:port", (_req, _res) => {
-  // Close port
-  var port = PORTS[_req.params.port];
-  if (port && port.isOpen) {
-    port.close();
-    _res.status(200).send();
-  } else {
-    _res.status(500).send();
-  }
-});
+function onPortClose(){
+  //Port has been closed on the I/O level
+  delete PORTS[this.path];
+  info("Closed port " + this.path);
+}
+
+function onPortReceive(_data) {
+  //Port has received data on the I/O level
+  info("Port " + this.path + " received " + _data.length + " bytes");
+  this.received.push.apply(this.received, _data);
+}
+
+function getPortSummary(_port) {
+  var summary = {
+    received: bytesToString(_port.received)
+  };
+  CONFIG_PROPERTIES.forEach((prop) => { summary[prop] = _port.settings[prop]; });
+  return summary;
+}
+
+function bytesToString(_bytes) {
+  return String.fromCharCode.apply(null, _bytes);
+}
