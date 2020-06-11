@@ -41,16 +41,20 @@ app.post("/ports/:port", async (_req, _res) => {
   if (!port) {
     return _res.status(500).send();
   }
-  var updated = {};
-  CONFIG_PROPERTIES.filter((prop) => { return _req.body[prop] != null; }).forEach((prop) => {
-    updated[prop] = _req.body[prop];
+
+  //Build port configuration object (current unless specified in body)
+  var configuration = {};
+  CONFIG_PROPERTIES.forEach((prop) => {
+    configuration[prop] = _req.body.hasOwnProperty(prop) ? _req.body[prop] : port.settings[prop];
   });
+
   //Clear received if requested
   if (Array.isArray(_req.body.received) && _req.body.received.length == 0) {
     port.received = [];
   }
+
   //Update settings
-  port.update(updated, () => {
+  port.update(configuration, () => {
     //Check for transmit data
     if (_req.body.transmit) {
       //Transmit the supplied data
